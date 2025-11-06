@@ -123,15 +123,48 @@ def sort_data_by_number_file(uploaded_df):
         how='left'
     )
     
-    # 정렬
-    merged_df = merged_df.sort_values(by=order_col).reset_index(drop=True)
+    # 상가별로 정렬 (먼저 상가명으로 그룹핑, 그 다음 순서번호로 정렬)
+    merged_df = merged_df.sort_values(
+        by=[brand_col, order_col], 
+        na_position='last'
+    ).reset_index(drop=True)
     
-    # 최종 데이터프레임 생성
-    result_df = pd.DataFrame({
-        '상가명': merged_df[brand_col],
-        '상호': merged_df[business_col],
-        '금액': merged_df[amount_col]
-    })
+    # 상가명 앞에 순서번호 추가
+    result_rows = []
+    current_brand = None
+    brand_counter = 0
+    
+    for idx, row in merged_df.iterrows():
+        brand_name = str(row[brand_col]) if pd.notna(row[brand_col]) else ""
+        business_name = str(row[business_col]) if pd.notna(row[business_col]) else ""
+        amount = row[amount_col]
+        
+        # 새로운 상가가 시작되면 카운터 리셋
+        if brand_name != current_brand:
+            current_brand = brand_name
+            brand_counter = 1
+        else:
+            brand_counter += 1
+        
+        # 상가명 앞에 순서번호 추가
+        # 예: "1마트", "2마트", "1상가", "2상가" 형식
+        if brand_name:
+            # 이미 숫자로 시작하는 경우 (예: "1상가") 그대로 사용
+            if brand_name[0].isdigit():
+                formatted_brand = brand_name
+            else:
+                # 숫자가 없는 경우 앞에 번호 추가
+                formatted_brand = f"{brand_counter}{brand_name}"
+        else:
+            formatted_brand = ""
+        
+        result_rows.append({
+            '상가명': formatted_brand,
+            '상호': business_name,
+            '금액': amount
+        })
+    
+    result_df = pd.DataFrame(result_rows)
     
     return result_df
 
