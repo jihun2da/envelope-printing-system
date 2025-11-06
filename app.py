@@ -33,10 +33,10 @@ image_path = os.path.join(base_dir, "g.jpg")
 def register_font():
     # 여러 폰트 경로 시도
     font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux (기본 설치됨, 한글 지원)
         "C:/Windows/Fonts/H2GTRE.TTF",  # Windows
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",  # Linux (Streamlit Cloud)
+        "C:/Windows/Fonts/malgun.ttf",  # Windows 맑은고딕
         "/System/Library/Fonts/AppleGothic.ttf",  # macOS
-        "fonts/NanumGothic.ttf",  # 로컬 fonts 폴더
     ]
     
     for font_path in font_paths:
