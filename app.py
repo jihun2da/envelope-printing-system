@@ -110,6 +110,13 @@ def sort_data_by_number_file(uploaded_df):
         st.error("❌ 업로드된 파일에서 '금액' 컬럼을 찾을 수 없습니다.")
         return None
     
+    # 원본 파일에 상가명 컬럼이 있는지 확인
+    original_brand_col = None
+    for col in uploaded_df.columns:
+        if '상가' in str(col):
+            original_brand_col = col
+            break
+    
     # number.xlsm의 컬럼 확인
     brand_col = df_number.columns[0]  # 브랜드/상가명
     number_business_col = df_number.columns[1]  # 상호
@@ -123,11 +130,37 @@ def sort_data_by_number_file(uploaded_df):
         how='left'
     )
     
-    # 상가별로 정렬 (먼저 상가명으로 그룹핑, 그 다음 순서번호로 정렬)
-    merged_df = merged_df.sort_values(
-        by=[brand_col, order_col], 
-        na_position='last'
-    ).reset_index(drop=True)
+    # 원본 파일에 상가명이 있으면 매칭 안 된 경우 원본 상가명 사용
+    if original_brand_col:
+        merged_df[brand_col] = merged_df[brand_col].fillna(merged_df[original_brand_col])
+    
+    # 매칭 여부 확인 (순서번호가 있으면 매칭된 것)
+    merged_df['has_order'] = merged_df[order_col].notna()
+    
+    # number.xlsm에 있는 모든 상가명 목록
+    all_brands_in_number = df_number[brand_col].unique()
+    
+    # 정렬을 위한 키 생성
+    def get_sort_key(row):
+        brand = row[brand_col] if pd.notna(row[brand_col]) else ""
+        has_order = row['has_order']
+        order_num = row[order_col] if pd.notna(row[order_col]) else 999999
+        
+        # 해당 상가가 number.xlsm에 존재하는지 확인
+        brand_exists_in_number = brand in all_brands_in_number
+        
+        if not brand_exists_in_number:
+            # number.xlsm에 아예 없는 상가 → 맨 앞 (0)
+            return (0, brand, 0, 0)
+        elif has_order:
+            # number.xlsm에 있고 순서번호도 있음 → 중간 (1)
+            return (1, brand, 0, order_num)
+        else:
+            # number.xlsm에 상가는 있지만 이 상호는 없음 → 해당 상가의 뒤 (1, brand, 1)
+            return (1, brand, 1, 999999)
+    
+    merged_df['sort_key'] = merged_df.apply(get_sort_key, axis=1)
+    merged_df = merged_df.sort_values('sort_key').reset_index(drop=True)
     
     # 상가명 앞에 순서번호 추가
     result_rows = []
@@ -138,25 +171,25 @@ def sort_data_by_number_file(uploaded_df):
         brand_name = str(row[brand_col]) if pd.notna(row[brand_col]) else ""
         business_name = str(row[business_col]) if pd.notna(row[business_col]) else ""
         amount = row[amount_col]
+        has_order = row['has_order']
         
-        # 새로운 상가가 시작되면 카운터 리셋
-        if brand_name != current_brand:
-            current_brand = brand_name
-            brand_counter = 1
-        else:
-            brand_counter += 1
-        
-        # 상가명 앞에 순서번호 추가
-        # 예: "1마트", "2마트", "1상가", "2상가" 형식
-        if brand_name:
-            # 이미 숫자로 시작하는 경우 (예: "1상가") 그대로 사용
-            if brand_name[0].isdigit():
+        # 순서번호가 있는 경우에만 상가명 앞에 번호 추가
+        if has_order and brand_name:
+            # 새로운 상가가 시작되면 카운터 리셋
+            if brand_name != current_brand:
+                current_brand = brand_name
+                brand_counter = 1
+            else:
+                brand_counter += 1
+            
+            # 이미 숫자로 시작하는 경우 그대로 사용
+            if brand_name and brand_name[0].isdigit():
                 formatted_brand = brand_name
             else:
-                # 숫자가 없는 경우 앞에 번호 추가
                 formatted_brand = f"{brand_counter}{brand_name}"
         else:
-            formatted_brand = ""
+            # 순서번호가 없으면 상가명만 (번호 없이)
+            formatted_brand = brand_name
         
         result_rows.append({
             '상가명': formatted_brand,
