@@ -31,12 +31,20 @@ image_path = os.path.join(base_dir, "g.jpg")
 # 한글 폰트 등록
 @st.cache_resource
 def register_font():
-    # 여러 폰트 경로 시도
+    # 여러 폰트 경로 시도 (한글 지원 폰트)
     font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux (기본 설치됨, 한글 지원)
-        "C:/Windows/Fonts/H2GTRE.TTF",  # Windows
-        "C:/Windows/Fonts/malgun.ttf",  # Windows 맑은고딕
-        "/System/Library/Fonts/AppleGothic.ttf",  # macOS
+        # Linux (Streamlit Cloud)
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+        "/usr/share/fonts/truetype/nanum-coding/NanumGothicCoding.ttf",
+        # Windows
+        "C:/Windows/Fonts/H2GTRE.TTF",
+        "C:/Windows/Fonts/malgun.ttf",
+        "C:/Windows/Fonts/gulim.ttc",
+        "C:/Windows/Fonts/batang.ttc",
+        # macOS
+        "/System/Library/Fonts/AppleGothic.ttf",
+        "/Library/Fonts/AppleGothic.ttf",
     ]
     
     for font_path in font_paths:
@@ -53,8 +61,8 @@ def register_font():
 font_available, font_name = register_font()
 
 if not font_available:
-    st.info("ℹ️ 한글 폰트를 찾을 수 없어 기본 폰트를 사용합니다.")
     FONT_NAME = "Helvetica"
+    st.warning("⚠️ 한글 폰트를 찾을 수 없습니다. PDF에 한글이 깨져 보일 수 있습니다.")
 else:
     FONT_NAME = "KoreanFont"
 
@@ -321,6 +329,14 @@ def create_colored_excel(df, original_file=None):
     output.seek(0)
     return output
 
+# Session State 초기화
+if 'sorted_data' not in st.session_state:
+    st.session_state.sorted_data = None
+if 'excel_data' not in st.session_state:
+    st.session_state.excel_data = None
+if 'pdf_data' not in st.session_state:
+    st.session_state.pdf_data = None
+
 # 메인 UI
 col1, col2 = st.columns([2, 1])
 
@@ -378,11 +394,6 @@ if uploaded_file is not None:
                 if sorted_df is not None:
                     st.success("✅ 데이터가 성공적으로 정렬되었습니다!")
                     
-                    # 정렬된 데이터 미리보기
-                    with st.expander("📊 정렬된 데이터 미리보기", expanded=True):
-                        st.dataframe(sorted_df.head(20))
-                        st.info(f"총 {len(sorted_df)}개의 행이 정렬되었습니다.")
-                    
                     # 엑셀 파일 생성
                     excel_output = create_colored_excel(sorted_df, uploaded_file)
                     
@@ -394,43 +405,61 @@ if uploaded_file is not None:
                         text_color=text_color_rgb
                     )
                     
-                    st.success("✅ PDF가 성공적으로 생성되었습니다!")
+                    # Session State에 저장
+                    st.session_state.sorted_data = sorted_df
+                    st.session_state.excel_data = excel_output.getvalue()
                     
-                    # 다운로드 버튼
-                    col_dl1, col_dl2 = st.columns(2)
-                    
-                    with col_dl1:
-                        st.download_button(
-                            label="📥 정렬된 엑셀 다운로드",
-                            data=excel_output,
-                            file_name="sorted_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                    
-                    with col_dl2:
-                        with open(pdf_file, 'rb') as f:
-                            pdf_data = f.read()
-                        
-                        st.download_button(
-                            label="📥 우편봉투 PDF 다운로드",
-                            data=pdf_data,
-                            file_name="envelopes.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
+                    with open(pdf_file, 'rb') as f:
+                        st.session_state.pdf_data = f.read()
                     
                     # 임시 파일 삭제
                     try:
                         os.unlink(pdf_file)
                     except:
                         pass
+                    
+                    st.success("✅ PDF가 성공적으로 생성되었습니다!")
+                    st.rerun()
+        
+        # 정렬된 데이터가 있으면 표시
+        if st.session_state.sorted_data is not None:
+            # 정렬된 데이터 미리보기
+            with st.expander("📊 정렬된 데이터 미리보기", expanded=True):
+                st.dataframe(st.session_state.sorted_data.head(20))
+                st.info(f"총 {len(st.session_state.sorted_data)}개의 행이 정렬되었습니다.")
+            
+            # 다운로드 버튼 (항상 표시)
+            col_dl1, col_dl2 = st.columns(2)
+            
+            with col_dl1:
+                st.download_button(
+                    label="📥 정렬된 엑셀 다운로드",
+                    data=st.session_state.excel_data,
+                    file_name="sorted_data.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="download_excel"
+                )
+            
+            with col_dl2:
+                st.download_button(
+                    label="📥 우편봉투 PDF 다운로드",
+                    data=st.session_state.pdf_data,
+                    file_name="envelopes.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="download_pdf"
+                )
         
     except Exception as e:
         st.error(f"❌ 오류가 발생했습니다: {str(e)}")
         st.exception(e)
 
 else:
+    # 파일 업로드가 없으면 세션 초기화
+    st.session_state.sorted_data = None
+    st.session_state.excel_data = None
+    st.session_state.pdf_data = None
     st.info("👆 엑셀 파일을 업로드하여 시작하세요.")
     
     # 사용 방법 안내
