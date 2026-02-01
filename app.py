@@ -77,6 +77,54 @@ def get_rgb_color(cell):
         return (r / 255.0, g / 255.0, b / 255.0)
     return (0, 0, 0)  # 기본 검정
 
+# 데이터 검증 함수
+def validate_data(df, business_col, amount_col):
+    """데이터 품질 검증 및 중복 경고"""
+    warnings = []
+    errors = []
+    
+    # 1. 중복 상호명 + 같은 상가 체크
+    if '상가' in df.columns or any('상가' in str(col) for col in df.columns):
+        brand_col = None
+        for col in df.columns:
+            if '상가' in str(col):
+                brand_col = col
+                break
+        
+        if brand_col:
+            # 같은 상가에서 상호가 중복되는 경우 체크
+            grouped = df.groupby([brand_col, business_col]).size()
+            duplicates = grouped[grouped > 1]
+            
+            if len(duplicates) > 0:
+                for (brand, business), count in duplicates.items():
+                    errors.append(f"⚠️ '{brand}' 상가에 '{business}' 상호가 {count}번 중복")
+    
+    # 2. 상호명만 중복 체크 (다른 상가여도)
+    business_counts = df[business_col].value_counts()
+    duplicate_businesses = business_counts[business_counts > 1]
+    
+    if len(duplicate_businesses) > 0:
+        warnings.append("📋 중복된 상호명 발견:")
+        for business, count in duplicate_businesses.items():
+            # 해당 상호의 상가명들 확인
+            if brand_col:
+                brands = df[df[business_col] == business][brand_col].unique()
+                brands_str = ", ".join([str(b) for b in brands])
+                warnings.append(f"   • '{business}': {count}번 (상가: {brands_str})")
+    
+    # 3. 금액이 0이거나 비정상적인 경우
+    if amount_col:
+        zero_amounts = df[df[amount_col] == 0]
+        if len(zero_amounts) > 0:
+            warnings.append(f"💰 금액이 0원인 항목 {len(zero_amounts)}개 발견")
+        
+        negative_amounts = df[df[amount_col] < 0]
+        if len(negative_amounts) > 0:
+            errors.append(f"❌ 금액이 음수인 항목 {len(negative_amounts)}개 발견")
+    
+    return warnings, errors
+
 # 데이터 정렬 함수
 def sort_data_by_number_file(uploaded_df):
     """업로드된 데이터를 number.xlsm 기준으로 정렬"""
@@ -138,9 +186,11 @@ def sort_data_by_number_file(uploaded_df):
         how='left'
     )
     
-    # 원본 파일에 상가명이 있으면 매칭 안 된 경우 원본 상가명 사용
+    # ✅ 수정: 원본 파일에 상가명이 있으면 원본 상가명을 우선 사용
+    # 이렇게 해야 원본 데이터의 의도를 존중하고 중복 문제를 방지함
     if original_brand_col:
-        merged_df[brand_col] = merged_df[brand_col].fillna(merged_df[original_brand_col])
+        # 원본에 상가명이 있는 경우 원본 상가명 사용, 없으면 number.xlsm 상가명 사용
+        merged_df[brand_col] = merged_df[original_brand_col].fillna(merged_df[brand_col])
     
     # 매칭 여부 확인 (순서번호가 있으면 매칭된 것)
     merged_df['has_order'] = merged_df[order_col].notna()
@@ -206,6 +256,32 @@ def sort_data_by_number_file(uploaded_df):
         })
     
     result_df = pd.DataFrame(result_rows)
+    
+    # ✅ 최종 검증: 정렬 후 데이터 무결성 체크
+    # 원본 데이터와 결과 데이터의 상호-금액 매핑이 일치하는지 확인
+    validation_passed = True
+    mismatches = []
+    
+    for idx, row in result_df.iterrows():
+        business = row['상호']
+        amount = row['금액']
+        
+        # 원본 데이터에서 같은 상호 찾기
+        original_rows = uploaded_df[uploaded_df[business_col] == business]
+        
+        if len(original_rows) > 0:
+            # 원본 금액과 비교
+            original_amounts = original_rows[amount_col].values
+            if amount not in original_amounts:
+                validation_passed = False
+                mismatches.append(f"상호 '{business}': 결과금액={amount}, 원본금액={original_amounts}")
+    
+    if not validation_passed:
+        st.error("❌ 데이터 무결성 검증 실패!")
+        st.error("정렬 과정에서 상호-금액 매핑이 바뀌었습니다:")
+        for mismatch in mismatches:
+            st.error(f"  • {mismatch}")
+        st.warning("원본 엑셀 파일을 확인하여 데이터가 올바른지 검토해주세요.")
     
     return result_df
 
@@ -381,6 +457,34 @@ if uploaded_file is not None:
         df_uploaded = pd.read_excel(uploaded_file)
         
         st.success("✅ 파일이 성공적으로 업로드되었습니다!")
+        
+        # 데이터 검증
+        business_col_temp = None
+        for col in df_uploaded.columns:
+            if '상호' in str(col):
+                business_col_temp = col
+                break
+        
+        amount_col_temp = None
+        for col in df_uploaded.columns:
+            if '금액' in str(col) or '입금' in str(col):
+                amount_col_temp = col
+                break
+        
+        if business_col_temp:
+            warnings, errors = validate_data(df_uploaded, business_col_temp, amount_col_temp)
+            
+            # 에러 표시 (치명적)
+            if errors:
+                for error in errors:
+                    st.error(error)
+            
+            # 경고 표시 (주의 필요)
+            if warnings:
+                with st.expander("⚠️ 데이터 검증 결과 (확인 필요)", expanded=True):
+                    for warning in warnings:
+                        st.warning(warning)
+                    st.info("💡 같은 상호명이 여러 상가에 있는 것은 정상일 수 있으나, 같은 상가에 같은 상호가 중복되면 확인이 필요합니다.")
         
         with st.expander("📊 업로드된 데이터 미리보기"):
             st.dataframe(df_uploaded.head(10))
